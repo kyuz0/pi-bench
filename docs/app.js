@@ -122,7 +122,7 @@ const App = {
                         quant = layerMatch[2];
                     } else {
                         // First check for verbose IQ quants (e.g., IQ2XXS-w2Q2K-AProjQ8...)
-                        const iqMatch = clean.match(/(.*?)-(IQ.*)$/i);
+                        const iqMatch = clean.match(/(.*?)-(UD-IQ.*|IQ.*)$/i);
                         if (iqMatch) {
                             base = iqMatch[1];
                             quant = iqMatch[2];
