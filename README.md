@@ -182,6 +182,7 @@ bun run src/index.ts tasks/curated/easy.json
 | `--rocm-version <ver>`| ROCm version running the backend | `7.2.4` |
 | `--context <tokens>` | Override model context window size for this run | From `models.json` |
 | `--timeout <minutes>` | Agent timeout per task | `30` |
+| `--pass <N>` | Number of attempts to make per task (retries on failure) | `1` |
 
 ### Examples
 
@@ -229,6 +230,14 @@ bun run src/index.ts tasks/curated/easy.json
   --judge-model google/gemini-3.1-pro-preview \
   --platform strix-halo \
   --context 90000 \
+  --timeout 45
+
+# Run with 2 attempts per task (pass@2)
+./run-swe-bench.sh tasks/verified-mini/ \
+  --provider llama.cpp \
+  --judge-model google/gemini-3.1-pro-preview \
+  --platform strix-halo \
+  --pass 2 \
   --timeout 45
 ```
 

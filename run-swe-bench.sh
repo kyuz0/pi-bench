@@ -17,7 +17,21 @@ set -e
 
 TARGET="${1:?Usage: ./run-swe-bench.sh <task-file-or-dir> [extra-args...]}"
 shift
-EXTRA_ARGS="$@"
+
+PASS_COUNT=1
+EXTRA_ARGS=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --pass)
+      PASS_COUNT="$2"
+      shift 2
+      ;;
+    *)
+      EXTRA_ARGS="$EXTRA_ARGS $1"
+      shift
+      ;;
+  esac
+done
 REGISTRY="ghcr.io/epoch-research/swe-bench.eval.x86_64"
 PI_BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -85,55 +99,114 @@ for task_file in "${TASK_FILES[@]}"; do
 
   REL_TASK_FILE=$(python3 -c "import os; print(os.path.relpath('$(realpath "$task_file")', '$(realpath "$PI_BENCH_DIR")'))")
 
-  # Run container and tee output to a temp file so we can extract the results dir
-  LOGFILE=$(mktemp /tmp/pi-bench-log.XXXXXX)
-  docker run --init -it --rm --network host $ENV_ARGS \
-    -v "$PI_BENCH_DIR:/pi-bench:z" \
-    -v "pi-bench-bun-cache:/root/.bun" \
-    "$IMAGE" \
-    bash -c "
-      set -e
+  for ATTEMPT in $(seq 1 $PASS_COUNT); do
+    if [ $PASS_COUNT -gt 1 ]; then
+      echo "[INFO] Starting attempt $ATTEMPT of $PASS_COUNT for $TASK_ID"
+    fi
 
-      # Install unzip + bun (cached after first run via volume)
-      if [ ! -f /root/.bun/bin/bun ]; then
-        echo '[SETUP] Installing bun...'
-        apt-get update -qq && apt-get install -y -qq unzip >/dev/null 2>&1
-        curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
-        echo '[SETUP] bun installed.'
+    # Run container and tee output to a temp file so we can extract the results dir
+    LOGFILE=$(mktemp /tmp/pi-bench-log.XXXXXX)
+    docker run --init -it --rm --network host $ENV_ARGS \
+      -v "$PI_BENCH_DIR:/pi-bench:z" \
+      -v "pi-bench-bun-cache:/root/.bun" \
+      "$IMAGE" \
+      bash -c "
+        set -e
+
+        # Install unzip + bun (cached after first run via volume)
+        if [ ! -f /root/.bun/bin/bun ]; then
+          echo '[SETUP] Installing bun...'
+          apt-get update -qq && apt-get install -y -qq unzip >/dev/null 2>&1
+          curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
+          echo '[SETUP] bun installed.'
+        fi
+        export PATH=/root/.bun/bin:\$PATH
+
+        # Ensure unzip is available (bun cache might exist from a previous run but unzip might not be in this container)
+        which unzip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq unzip >/dev/null 2>&1; }
+
+        # Install pi-bench dependencies (fast if node_modules exists from bind mount)
+        cd /pi-bench && bun install --frozen-lockfile 2>/dev/null || bun install 2>/dev/null
+
+        # Activate the SWE-bench testbed conda environment so 'python' resolves
+        # to the correct version (e.g. Python 3.6 for Django, 3.8+ for Sphinx)
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate testbed
+
+        # Run the benchmark
+        bun run src/index.ts $REL_TASK_FILE $EXTRA_ARGS
+      " 2>&1 | tee "$LOGFILE"
+
+    EXIT_CODE=${PIPESTATUS[0]}
+
+    # Capture the results directory from container output (first occurrence only)
+    if [ -z "$RESULTS_DIR" ]; then
+      RESULTS_DIR=$(grep -m1 'Saving results to directory:' "$LOGFILE" | sed 's/.*Saving results to directory: //' | tr -d '\r' || true)
+    fi
+    rm -f "$LOGFILE"
+
+    if [ $EXIT_CODE -eq 2 ]; then
+      echo "[FATAL] Inference backend is unreachable or crashed. Aborting entire benchmark run."
+      exit 2
+    fi
+
+    # Rename the outputs for this attempt
+    if [ -n "$RESULTS_DIR" ]; then
+      mv "$RESULTS_DIR/results-${TASK_ID}.json" "$RESULTS_DIR/results-${TASK_ID}-attempt${ATTEMPT}.json" 2>/dev/null || true
+      mv "$RESULTS_DIR/transcript-${TASK_ID}.json" "$RESULTS_DIR/transcript-${TASK_ID}-attempt${ATTEMPT}.json" 2>/dev/null || true
+
+      # Check if this attempt succeeded
+      JUDGE_SCORE=$(python3 -c "import json, sys; r=json.load(open(sys.argv[1], 'r')); print(r.get('judgeScore', 0))" "$RESULTS_DIR/results-${TASK_ID}-attempt${ATTEMPT}.json" 2>/dev/null || echo "0")
+      if [ "$JUDGE_SCORE" = "1" ]; then
+        break
       fi
-      export PATH=/root/.bun/bin:\$PATH
+    fi
+  done
 
-      # Ensure unzip is available (bun cache might exist from a previous run but unzip might not be in this container)
-      which unzip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq unzip >/dev/null 2>&1; }
+  # Combine attempts and determine pass/fail
+  python3 -c "
+import json, sys, os, shutil
+results_dir = sys.argv[1]
+task_id = sys.argv[2]
+pass_count = int(sys.argv[3])
 
-      # Install pi-bench dependencies (fast if node_modules exists from bind mount)
-      cd /pi-bench && bun install --frozen-lockfile 2>/dev/null || bun install 2>/dev/null
+attempts = []
+best_attempt = None
+succeeded_at = None
 
-      # Activate the SWE-bench testbed conda environment so 'python' resolves
-      # to the correct version (e.g. Python 3.6 for Django, 3.8+ for Sphinx)
-      source /opt/miniconda3/etc/profile.d/conda.sh
-      conda activate testbed
+for a in range(1, pass_count + 1):
+    res_path = os.path.join(results_dir, f'results-{task_id}-attempt{a}.json')
+    if os.path.exists(res_path):
+        with open(res_path, 'r') as f:
+            data = json.load(f)
+            attempts.append(data)
+            best_attempt = a
+            if data.get('judgeScore') == 1:
+                succeeded_at = a
+                break
 
-      # Run the benchmark
-      bun run src/index.ts $REL_TASK_FILE $EXTRA_ARGS
-    " 2>&1 | tee "$LOGFILE"
+if attempts:
+    final_data = attempts[-1].copy() # use the last run as base
+    final_data['attempts'] = attempts
+    final_data['succeededAtAttempt'] = succeeded_at
+    
+    with open(os.path.join(results_dir, f'results-{task_id}.json'), 'w') as f:
+        json.dump(final_data, f, indent=2)
+        
+    # Copy the best transcript to standard name for legacy support
+    best_trans = os.path.join(results_dir, f'transcript-{task_id}-attempt{best_attempt}.json')
+    final_trans = os.path.join(results_dir, f'transcript-{task_id}.json')
+    if os.path.exists(best_trans):
+        shutil.copy2(best_trans, final_trans)
+" "$RESULTS_DIR" "$TASK_ID" "$PASS_COUNT"
 
-  EXIT_CODE=${PIPESTATUS[0]}
-
-  # Capture the results directory from container output (first occurrence only)
-  if [ -z "$RESULTS_DIR" ]; then
-    RESULTS_DIR=$(grep -m1 'Saving results to directory:' "$LOGFILE" | sed 's/.*Saving results to directory: //' | tr -d '\r' || true)
-  fi
-  rm -f "$LOGFILE"
-
-  if [ $EXIT_CODE -eq 0 ]; then
+  # Count passes/fails based on the final combined file
+  FINAL_SCORE=$(python3 -c "import json, sys; r=json.load(open(sys.argv[1], 'r')); print(r.get('judgeScore', 0))" "$RESULTS_DIR/results-${TASK_ID}.json" 2>/dev/null || echo "0")
+  if [ "$FINAL_SCORE" = "1" ]; then
     PASSED=$((PASSED + 1))
-  elif [ $EXIT_CODE -eq 2 ]; then
-    echo "[FATAL] Inference backend is unreachable or crashed. Aborting entire benchmark run."
-    exit 2
   else
     FAILED=$((FAILED + 1))
-    echo "[WARN] Task $TASK_ID exited with code $EXIT_CODE"
+    echo "[WARN] Task $TASK_ID failed after $ATTEMPT attempts"
   fi
 done
 

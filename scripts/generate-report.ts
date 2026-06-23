@@ -11,6 +11,8 @@ interface TaskResult {
   judgeScore: number;
   judgeRationale: string;
   transcriptUrl?: string;
+  attempts?: TaskResult[];
+  succeededAtAttempt?: number | null;
 }
 
 interface Platform {
@@ -146,7 +148,7 @@ async function main() {
       ? `${target.platform.id}::${target.name}::${target.tag}`
       : `${target.platform.id}::${target.name}`;
     const files = await readdir(target.dir);
-    const jsonFiles = files.filter((f) => f.startsWith("results-") && f.endsWith(".json"));
+    const jsonFiles = files.filter((f) => f.startsWith("results-") && f.endsWith(".json") && !f.includes("-attempt"));
 
     let totalTasks = 0;
     let passedTasks = 0;
@@ -172,6 +174,16 @@ async function main() {
         if (existsSync(join(target.dir, transcriptName))) {
           const relativeDir = target.dir.substring(target.dir.indexOf("benchmark_results"));
           result.transcriptUrl = `https://github.com/kyuz0/pi-bench/blob/main/${relativeDir}/${transcriptName}`.replace(/\\/g, "/");
+        }
+
+        if (result.attempts && Array.isArray(result.attempts)) {
+          result.attempts.forEach((attempt, idx) => {
+            const attemptTranscript = `transcript-${taskId}-attempt${idx + 1}.json`;
+            if (existsSync(join(target.dir, attemptTranscript))) {
+              const relativeDir = target.dir.substring(target.dir.indexOf("benchmark_results"));
+              attempt.transcriptUrl = `https://github.com/kyuz0/pi-bench/blob/main/${relativeDir}/${attemptTranscript}`.replace(/\\/g, "/");
+            }
+          });
         }
 
         if (!tasksMap[taskId]) {
