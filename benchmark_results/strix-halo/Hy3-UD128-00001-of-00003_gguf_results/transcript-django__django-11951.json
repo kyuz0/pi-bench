@@ -1,0 +1,456 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are an expert AI coding assistant. The target repository has ALREADY been cloned into your CURRENT WORKING DIRECTORY (`/testbed`). \n\nCRITICAL INSTRUCTIONS:\n1. Do NOT use `git clone` or download any repositories. The code is already here.\n2. ALL your work (fixes and tests) must be done STRICTLY within your current working directory. Use relative paths (e.g., `.`) instead of absolute paths.\n3. Do NOT explore, read, or modify files outside of your current working directory.\n4. Focus only on fixing the issue described below and verifying your fix with tests.\n5. You are running completely autonomously. There is NO human interaction. You must independently investigate, write the fix, verify it, and then STOP calling tools when you are done.\n6. You are to complete the task and produce changes editing the files in this project. Do not stop without editing the files required to complete the task!\n7. The development environment is already fully configured with the correct Python version and all dependencies pre-installed. Do NOT install packages, create virtual environments, or modify the Python installation. Just focus on understanding and fixing the bug.\n8. If necessary you can write tests or modify existing tests to verify your fix. Avoid running the entire test suite though, if you can only focus on tests that are relevant to the code you're changing to ensure you're not introducing regressions.\n9. Make the MINIMAL changes necessary to fix the issue. Do not refactor unrelated code.\n10. TIME EFFICIENCY - Do NOT waste time on:\n    - Unnecessary git archaeology (git log, git show). Focus on the CURRENT code, not its history, unless you deem it essential to fix the issue.\n    - Re-running the same test with different pipe/grep/tail flags. Capture the full output ONCE and read it.\n    - Guessing test class/function names. If unsure, grep for the class name first BEFORE running.\n11. INFINITE LOOP PREVENTION - When running test suites or scripts that execute code you have modified, wrap the command with `timeout` to guard against inadvertent infinite loops (e.g., `timeout 300 python -m pytest tests/test_xxx.py -xvs`). No single test run should need more than 5 minutes.\n\nIssue Description:\nbulk_create batch_size param overrides the compatible batch size calculation\nDescription\n\t \n\t\t(last modified by Ahmet Kucuk)\n\t \nAt this line: ​https://github.com/django/django/blob/stable/2.2.x/django/db/models/query.py#L1197\nbatch_size param overrides compatible batch size calculation. This looks like a bug as bulk_update properly picks the minimum of two:\n​https://github.com/django/django/blob/stable/2.2.x/django/db/models/query.py#L504\nI suggest using similar\n batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size\nlogic in bulk_create as well. I am happy to open a PR for it.\n"
+      }
+    ],
+    "timestamp": 1783743146537
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll investigate the issue in the Django codebase."
+      },
+      {
+        "type": "toolCall",
+        "id": "QAKxDWXVHetvZeFfnWdTIZbVLPX7ZzuC",
+        "name": "read",
+        "arguments": {
+          "path": "/testbed/django/db/models/query.py",
+          "offset": 1150,
+          "limit": 70
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 156,
+      "output": 51,
+      "cacheRead": 1877,
+      "cacheWrite": 0,
+      "totalTokens": 2084,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743146554,
+    "responseId": "chatcmpl-bEEfEc2vanXipswm5mp5OnwVL0mxaHe8",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "QAKxDWXVHetvZeFfnWdTIZbVLPX7ZzuC",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "                raise ValueError('only() is not supported with FilteredRelation.')\n        clone = self._chain()\n        clone.query.add_immediate_loading(fields)\n        return clone\n\n    def using(self, alias):\n        \"\"\"Select which database this QuerySet should execute against.\"\"\"\n        clone = self._chain()\n        clone._db = alias\n        return clone\n\n    ###################################\n    # PUBLIC INTROSPECTION ATTRIBUTES #\n    ###################################\n\n    @property\n    def ordered(self):\n        \"\"\"\n        Return True if the QuerySet is ordered -- i.e. has an order_by()\n        clause or a default ordering on the model (or is empty).\n        \"\"\"\n        if isinstance(self, EmptyQuerySet):\n            return True\n        if self.query.extra_order_by or self.query.order_by:\n            return True\n        elif self.query.default_ordering and self.query.get_meta().ordering:\n            return True\n        else:\n            return False\n\n    @property\n    def db(self):\n        \"\"\"Return the database used if this query is executed now.\"\"\"\n        if self._for_write:\n            return self._db or router.db_for_write(self.model, **self._hints)\n        return self._db or router.db_for_read(self.model, **self._hints)\n\n    ###################\n    # PRIVATE METHODS #\n    ###################\n\n    def _insert(self, objs, fields, returning_fields=None, raw=False, using=None, ignore_conflicts=False):\n        \"\"\"\n        Insert a new record for the given model. This provides an interface to\n        the InsertQuery class and is how Model.save() is implemented.\n        \"\"\"\n        self._for_write = True\n        if using is None:\n            using = self.db\n        query = sql.InsertQuery(self.model, ignore_conflicts=ignore_conflicts)\n        query.insert_values(fields, objs, raw=raw)\n        return query.get_compiler(using=using).execute_sql(returning_fields)\n    _insert.alters_data = True\n    _insert.queryset_only = False\n\n    def _batched_insert(self, objs, fields, batch_size, ignore_conflicts=False):\n        \"\"\"\n        Helper method for bulk_create() to insert objs one batch at a time.\n        \"\"\"\n        if ignore_conflicts and not connections[self.db].features.supports_ignore_conflicts:\n            raise NotSupportedError('This database backend does not support ignoring conflicts.')\n        ops = connections[self.db].ops\n        batch_size = (batch_size or max(ops.bulk_batch_size(fields, objs), 1))\n        inserted_rows = []\n        bulk_return = connections[self.db].features.can_return_rows_from_bulk_insert\n        for item in [objs[i:i + batch_size] for i in range(0, len(objs), batch_size)]:\n            if bulk_return and not ignore_conflicts:\n                inserted_columns = self._insert(\n                    item, fields=fields, using=self.db,\n                    returning_fields=self.model._meta.db_returning_fields,\n\n[704 more lines in file. Use offset=1220 to continue.]"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743174337
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I can see the issue. Let me look at the `bulk_update` implementation for reference."
+      },
+      {
+        "type": "toolCall",
+        "id": "2iSdGZAPMJnSbi6sAFx1KhDTrF0hIX6O",
+        "name": "read",
+        "arguments": {
+          "path": "/testbed/django/db/models/query.py",
+          "offset": 480,
+          "limit": 30
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 691,
+      "output": 60,
+      "cacheRead": 2047,
+      "cacheWrite": 0,
+      "totalTokens": 2798,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743174338,
+    "responseId": "chatcmpl-UqzBEhH3U2GXoVr7Sqj5C2isuVEAUd1A",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "2iSdGZAPMJnSbi6sAFx1KhDTrF0hIX6O",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "                for obj_with_pk, results in zip(objs_with_pk, returned_columns):\n                    for result, field in zip(results, opts.db_returning_fields):\n                        if field != opts.pk:\n                            setattr(obj_with_pk, field.attname, result)\n                for obj_with_pk in objs_with_pk:\n                    obj_with_pk._state.adding = False\n                    obj_with_pk._state.db = self.db\n            if objs_without_pk:\n                fields = [f for f in fields if not isinstance(f, AutoField)]\n                returned_columns = self._batched_insert(\n                    objs_without_pk, fields, batch_size, ignore_conflicts=ignore_conflicts,\n                )\n                if connection.features.can_return_rows_from_bulk_insert and not ignore_conflicts:\n                    assert len(returned_columns) == len(objs_without_pk)\n                for obj_without_pk, results in zip(objs_without_pk, returned_columns):\n                    for result, field in zip(results, opts.db_returning_fields):\n                        setattr(obj_without_pk, field.attname, result)\n                    obj_without_pk._state.adding = False\n                    obj_without_pk._state.db = self.db\n\n        return objs\n\n    def bulk_update(self, objs, fields, batch_size=None):\n        \"\"\"\n        Update the given fields in each of the given objects in the database.\n        \"\"\"\n        if batch_size is not None and batch_size < 0:\n            raise ValueError('Batch size must be a positive integer.')\n        if not fields:\n            raise ValueError('Field names must be given to bulk_update().')\n\n[1414 more lines in file. Use offset=510 to continue.]"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743190775
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "UGEYGQ9lKd7Hh3of46zILnV2C7PIHm8f",
+        "name": "read",
+        "arguments": {
+          "path": "/testbed/django/db/models/query.py",
+          "offset": 510,
+          "limit": 30
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 395,
+      "output": 40,
+      "cacheRead": 2762,
+      "cacheWrite": 0,
+      "totalTokens": 3197,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743190775,
+    "responseId": "chatcmpl-9gs8F00k8ALLEiIV9btpDOld5TgbgtkC",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "UGEYGQ9lKd7Hh3of46zILnV2C7PIHm8f",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "        objs = tuple(objs)\n        if any(obj.pk is None for obj in objs):\n            raise ValueError('All bulk_update() objects must have a primary key set.')\n        fields = [self.model._meta.get_field(name) for name in fields]\n        if any(not f.concrete or f.many_to_many for f in fields):\n            raise ValueError('bulk_update() can only be used with concrete fields.')\n        if any(f.primary_key for f in fields):\n            raise ValueError('bulk_update() cannot be used with primary key fields.')\n        if not objs:\n            return\n        # PK is used twice in the resulting update query, once in the filter\n        # and once in the WHEN. Each field will also have one CAST.\n        max_batch_size = connections[self.db].ops.bulk_batch_size(['pk', 'pk'] + fields, objs)\n        batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size\n        requires_casting = connections[self.db].features.requires_casted_case_in_updates\n        batches = (objs[i:i + batch_size] for i in range(0, len(objs), batch_size))\n        updates = []\n        for batch_objs in batches:\n            update_kwargs = {}\n            for field in fields:\n                when_statements = []\n                for obj in batch_objs:\n                    attr = getattr(obj, field.attname)\n                    if not isinstance(attr, Expression):\n                        attr = Value(attr, output_field=field)\n                    when_statements.append(When(pk=obj.pk, then=attr))\n                case_statement = Case(*when_statements, output_field=field)\n                if requires_casting:\n                    case_statement = Cast(case_statement, output_field=field)\n                update_kwargs[field.attname] = case_statement\n\n[1384 more lines in file. Use offset=540 to continue.]"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743200464
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Now I understand the fix. Let me update `_batched_insert` to use the `min` logic."
+      },
+      {
+        "type": "toolCall",
+        "id": "IuMj5fOPBx8fW71hKLreBZhOyGCOm2lJ",
+        "name": "edit",
+        "arguments": {
+          "path": "/testbed/django/db/models/query.py",
+          "edits": [
+            {
+              "oldText": "        ops = connections[self.db].ops\n        batch_size = (batch_size or max(ops.bulk_batch_size(fields, objs), 1))",
+              "newText": "        ops = connections[self.db].ops\n        max_batch_size = max(ops.bulk_batch_size(fields, objs), 1)\n        batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size"
+            }
+          ]
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 446,
+      "output": 150,
+      "cacheRead": 3161,
+      "cacheWrite": 0,
+      "totalTokens": 3757,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743200469,
+    "responseId": "chatcmpl-x6Tze7YWs9nas90oKF1qD5qYRo3MTm5p",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "IuMj5fOPBx8fW71hKLreBZhOyGCOm2lJ",
+    "toolName": "edit",
+    "content": [
+      {
+        "type": "text",
+        "text": "Successfully replaced 1 block(s) in /testbed/django/db/models/query.py."
+      }
+    ],
+    "details": {
+      "diff": "      ...\n 1208         \"\"\"\n 1209         if ignore_conflicts and not connections[self.db].features.supports_ignore_conflicts:\n 1210             raise NotSupportedError('This database backend does not support ignoring conflicts.')\n 1211         ops = connections[self.db].ops\n-1212         batch_size = (batch_size or max(ops.bulk_batch_size(fields, objs), 1))\n+1212         max_batch_size = max(ops.bulk_batch_size(fields, objs), 1)\n+1213         batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size\n 1213         inserted_rows = []\n 1214         bulk_return = connections[self.db].features.can_return_rows_from_bulk_insert\n 1215         for item in [objs[i:i + batch_size] for i in range(0, len(objs), batch_size)]:\n 1216             if bulk_return and not ignore_conflicts:\n      ...",
+      "firstChangedLine": 1212
+    },
+    "isError": false,
+    "timestamp": 1783743218281
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Now let me verify the change and check that there's a test for this behavior."
+      },
+      {
+        "type": "toolCall",
+        "id": "vYozyLgYEuyNiucf77vYG9uURbNgL26B",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && grep -rn \"batch_size\" tests/bulk_create/tests.py | head -30"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 156,
+      "output": 55,
+      "cacheRead": 3633,
+      "cacheWrite": 0,
+      "totalTokens": 3844,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743218282,
+    "responseId": "chatcmpl-NoF9p8EeByu6wpVxhtDOWreDPeiAWE8z",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "vYozyLgYEuyNiucf77vYG9uURbNgL26B",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "189:    def test_explicit_batch_size(self):\n192:        TwoFields.objects.bulk_create(objs, batch_size=1)\n195:        TwoFields.objects.bulk_create(objs, batch_size=2)\n198:        TwoFields.objects.bulk_create(objs, batch_size=3)\n201:        TwoFields.objects.bulk_create(objs, batch_size=num_objs)\n209:    def test_explicit_batch_size_efficiency(self):\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743227011
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "eU9GdN5sbUBxtuxoadeq8tpgzaBoZwyv",
+        "name": "read",
+        "arguments": {
+          "path": "/testbed/tests/bulk_create/tests.py",
+          "offset": 185,
+          "limit": 35
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 140,
+      "output": 41,
+      "cacheRead": 3810,
+      "cacheWrite": 0,
+      "totalTokens": 3991,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743227011,
+    "responseId": "chatcmpl-d8umhuqzdZEPFEFBiRGTV9PQ2WelRj2C",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "eU9GdN5sbUBxtuxoadeq8tpgzaBoZwyv",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "                TwoFields(id=i if i % 2 == 0 else None, f1=i, f2=i + 1)\n                for i in range(100000, 101000)])\n            self.assertLess(len(connection.queries), 10)\n\n    def test_explicit_batch_size(self):\n        objs = [TwoFields(f1=i, f2=i) for i in range(0, 4)]\n        num_objs = len(objs)\n        TwoFields.objects.bulk_create(objs, batch_size=1)\n        self.assertEqual(TwoFields.objects.count(), num_objs)\n        TwoFields.objects.all().delete()\n        TwoFields.objects.bulk_create(objs, batch_size=2)\n        self.assertEqual(TwoFields.objects.count(), num_objs)\n        TwoFields.objects.all().delete()\n        TwoFields.objects.bulk_create(objs, batch_size=3)\n        self.assertEqual(TwoFields.objects.count(), num_objs)\n        TwoFields.objects.all().delete()\n        TwoFields.objects.bulk_create(objs, batch_size=num_objs)\n        self.assertEqual(TwoFields.objects.count(), num_objs)\n\n    def test_empty_model(self):\n        NoFields.objects.bulk_create([NoFields() for i in range(2)])\n        self.assertEqual(NoFields.objects.count(), 2)\n\n    @skipUnlessDBFeature('has_bulk_insert')\n    def test_explicit_batch_size_efficiency(self):\n        objs = [TwoFields(f1=i, f2=i) for i in range(0, 100)]\n        with self.assertNumQueries(2):\n            TwoFields.objects.bulk_create(objs, 50)\n        TwoFields.objects.all().delete()\n        with self.assertNumQueries(1):\n            TwoFields.objects.bulk_create(objs, len(objs))\n\n    @skipUnlessDBFeature('has_bulk_insert')\n    def test_bulk_insert_expressions(self):\n        Restaurant.objects.bulk_create([\n\n[89 more lines in file. Use offset=220 to continue.]"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743234552
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The fix looks good. Let me verify with a quick test using SQLite."
+      },
+      {
+        "type": "toolCall",
+        "id": "eUErozvxm7mpMqeAEcGERiwnNLUPuwnO",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python -m pytest tests/bulk_create/tests.py -x -q 2>&1 | tail -20"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 464,
+      "output": 58,
+      "cacheRead": 3954,
+      "cacheWrite": 0,
+      "totalTokens": 4476,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743234553,
+    "responseId": "chatcmpl-Q2FmpNMPMpXIGKDqLX0VJt106DLkfoi7",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "eUErozvxm7mpMqeAEcGERiwnNLUPuwnO",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "/opt/miniconda3/envs/testbed/bin/python: No module named pytest\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743246369
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "QMSh18zFgpgpjaCg14WAkpviJZ7a7ZVg",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python tests/runtests.py bulk_create --verbosity=1 2>&1 | tail -20"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 69,
+      "output": 41,
+      "cacheRead": 4437,
+      "cacheWrite": 0,
+      "totalTokens": 4547,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1783743246370,
+    "responseId": "chatcmpl-8BOuU4ciBZfViuWPwY85cfFGL2zmCf3K",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "QMSh18zFgpgpjaCg14WAkpviJZ7a7ZVg",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "Creating test database for alias 'default'...\n........s...........sss..s\n----------------------------------------------------------------------\nRan 26 tests in 0.064s\n\nOK (skipped=5)\nDestroying test database for alias 'default'...\nTesting against Django installed in '/testbed/django' with up to 32 processes\nSystem check identified no issues (0 silenced).\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1783743254355
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "All tests pass. The fix is complete.\n\n## Summary\n\nThe issue was that in `bulk_create`'s `_batched_insert` helper, the `batch_size` parameter (when explicitly provided) overrode the database-compatible batch size calculation from `ops.bulk_batch_size()`, potentially producing queries too large for the backend (e.g. exceeding SQLite's `SQLITE_MAX_VARIABLE_NUMBER`).\n\nIn `/testbed/django/db/models/query.py`, I changed `_batched_insert` to mirror the logic already used in `bulk_update`:\n\n```python\nops = connections[self.db].ops\nmax_batch_size = max(ops.bulk_batch_size(fields, objs), 1)\nbatch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size\n```\n\nThis ensures that when `batch_size` is provided, the actual batch used is the minimum of the user-specified size and the database-compatible maximum, and when it's not provided, the compatible size is used (with a floor of 1). All 26 bulk_create tests pass."
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 126,
+      "output": 224,
+      "cacheRead": 4510,
+      "cacheWrite": 0,
+      "totalTokens": 4860,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "stop",
+    "timestamp": 1783743254355,
+    "responseId": "chatcmpl-MR2irzv8GNnXU8xdO1Msj6TGxdsL6bd0",
+    "responseModel": "Hy3-UD128-00001-of-00003.gguf"
+  }
+]
