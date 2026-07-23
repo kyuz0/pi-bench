@@ -1,0 +1,654 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are an expert AI coding assistant. The target repository has ALREADY been cloned into your CURRENT WORKING DIRECTORY (`/testbed`). \n\nCRITICAL INSTRUCTIONS:\n1. Do NOT use `git clone` or download any repositories. The code is already here.\n2. ALL your work (fixes and tests) must be done STRICTLY within your current working directory. Use relative paths (e.g., `.`) instead of absolute paths.\n3. Do NOT explore, read, or modify files outside of your current working directory.\n4. Focus only on fixing the issue described below and verifying your fix with tests.\n5. You are running completely autonomously. There is NO human interaction. You must independently investigate, write the fix, verify it, and then STOP calling tools when you are done.\n6. You are to complete the task and produce changes editing the files in this project. Do not stop without editing the files required to complete the task!\n7. The development environment is already fully configured with the correct Python version and all dependencies pre-installed. Do NOT install packages, create virtual environments, or modify the Python installation. Just focus on understanding and fixing the bug.\n8. If necessary you can write tests or modify existing tests to verify your fix. Avoid running the entire test suite though, if you can only focus on tests that are relevant to the code you're changing to ensure you're not introducing regressions.\n9. Make the MINIMAL changes necessary to fix the issue. Do not refactor unrelated code.\n10. TIME EFFICIENCY - Do NOT waste time on:\n    - Unnecessary git archaeology (git log, git show). Focus on the CURRENT code, not its history, unless you deem it essential to fix the issue.\n    - Re-running the same test with different pipe/grep/tail flags. Capture the full output ONCE and read it.\n    - Guessing test class/function names. If unsure, grep for the class name first BEFORE running.\n11. INFINITE LOOP PREVENTION - When running test suites or scripts that execute code you have modified, wrap the command with `timeout` to guard against inadvertent infinite loops (e.g., `timeout 300 python -m pytest tests/test_xxx.py -xvs`). No single test run should need more than 5 minutes.\n\nIssue Description:\nThe value of a TextChoices/IntegerChoices field has a differing type\nDescription\n\t\nIf we create an instance of a model having a CharField or IntegerField with the keyword choices pointing to IntegerChoices or TextChoices, the value returned by the getter of the field will be of the same type as the one created by enum.Enum (enum value).\nFor example, this model:\nfrom django.db import models\nfrom django.utils.translation import gettext_lazy as _\nclass MyChoice(models.TextChoices):\n\tFIRST_CHOICE = \"first\", _(\"The first choice, it is\")\n\tSECOND_CHOICE = \"second\", _(\"The second choice, it is\")\nclass MyObject(models.Model):\n\tmy_str_value = models.CharField(max_length=10, choices=MyChoice.choices)\nThen this test:\nfrom django.test import TestCase\nfrom testing.pkg.models import MyObject, MyChoice\nclass EnumTest(TestCase):\n\tdef setUp(self) -> None:\n\t\tself.my_object = MyObject.objects.create(my_str_value=MyChoice.FIRST_CHOICE)\n\tdef test_created_object_is_str(self):\n\t\tmy_object = self.my_object\n\t\tself.assertIsInstance(my_object.my_str_value, str)\n\t\tself.assertEqual(str(my_object.my_str_value), \"first\")\n\tdef test_retrieved_object_is_str(self):\n\t\tmy_object = MyObject.objects.last()\n\t\tself.assertIsInstance(my_object.my_str_value, str)\n\t\tself.assertEqual(str(my_object.my_str_value), \"first\")\nAnd then the results:\n(django30-venv) ➜ django30 ./manage.py test\nCreating test database for alias 'default'...\nSystem check identified no issues (0 silenced).\nF.\n======================================================================\nFAIL: test_created_object_is_str (testing.tests.EnumTest)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n File \"/Users/mikailkocak/Development/django30/testing/tests.py\", line 14, in test_created_object_is_str\n\tself.assertEqual(str(my_object.my_str_value), \"first\")\nAssertionError: 'MyChoice.FIRST_CHOICE' != 'first'\n- MyChoice.FIRST_CHOICE\n+ first\n----------------------------------------------------------------------\nRan 2 tests in 0.002s\nFAILED (failures=1)\nWe notice when invoking __str__(...) we don't actually get the value property of the enum value which can lead to some unexpected issues, especially when communicating to an external API with a freshly created instance that will send MyEnum.MyValue, and the one that was retrieved would send my_value.\n"
+      }
+    ],
+    "timestamp": 1784719202328
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll investigate the issue. Let me look at the Django source code related to choices and field `__str__` behavior."
+      },
+      {
+        "type": "toolCall",
+        "id": "49cUauDQUIzV3E3MT0f0NbJEPEyLLnFY",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && git log --oneline -3 && find . -path ./node_modules -prune -o -name \"*.py\" -print | grep -i choices | head"
+        }
+      },
+      {
+        "type": "toolCall",
+        "id": "2HPLgK4qpwah0W3mOZLYcWaCYuoK4AHd",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python -c \"import django; print(django.__version__); print(django.__file__)\""
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 528,
+      "output": 120,
+      "cacheRead": 1877,
+      "cacheWrite": 0,
+      "totalTokens": 2525,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719202345,
+    "responseId": "chatcmpl-aAjqoD3j0sclNyg3qmbDv1lGBoq6uYHB",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "49cUauDQUIzV3E3MT0f0NbJEPEyLLnFY",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "fc2b1cc926 Fixed #30904 -- Doc'd caveat about using filtered queryset with select_for_update() on MySQL.\n05c3ef26a2 Fixed #30906 -- Fixed an example of using the template system to generate CSV.\ncabf1fe37e Refs #30897 -- Made cosmetic edits to QuerySet.explain() documentation.\n./django/contrib/admin/migrations/0003_logentry_add_action_flag_choices.py\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719217129
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "2HPLgK4qpwah0W3mOZLYcWaCYuoK4AHd",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "3.1\n/testbed/django/__init__.py\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719217129
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "jhMrIxZ5yxpum2iF8x8tcgQIaDi16JQJ",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && grep -rn \"def __str__\" django/db/models/enums.py"
+        }
+      },
+      {
+        "type": "toolCall",
+        "id": "s1ebo53KtTvXzJtd7b06OK64PIglAxw1",
+        "name": "read",
+        "arguments": {
+          "path": "/testbed/django/db/models/enums.py"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 120,
+      "output": 59,
+      "cacheRead": 2525,
+      "cacheWrite": 0,
+      "totalTokens": 2704,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719217129,
+    "responseId": "chatcmpl-KqeaWehYd0FHumuw4wjekoLM9nOvPgSG",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "jhMrIxZ5yxpum2iF8x8tcgQIaDi16JQJ",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "(no output)\n\nCommand exited with code 1"
+      }
+    ],
+    "details": {},
+    "isError": true,
+    "timestamp": 1784719224393
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "s1ebo53KtTvXzJtd7b06OK64PIglAxw1",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "import enum\n\nfrom django.utils.functional import Promise\n\n__all__ = ['Choices', 'IntegerChoices', 'TextChoices']\n\n\nclass ChoicesMeta(enum.EnumMeta):\n    \"\"\"A metaclass for creating a enum choices.\"\"\"\n\n    def __new__(metacls, classname, bases, classdict):\n        labels = []\n        for key in classdict._member_names:\n            value = classdict[key]\n            if (\n                isinstance(value, (list, tuple)) and\n                len(value) > 1 and\n                isinstance(value[-1], (Promise, str))\n            ):\n                *value, label = value\n                value = tuple(value)\n            else:\n                label = key.replace('_', ' ').title()\n            labels.append(label)\n            # Use dict.__setitem__() to suppress defenses against double\n            # assignment in enum's classdict.\n            dict.__setitem__(classdict, key, value)\n        cls = super().__new__(metacls, classname, bases, classdict)\n        cls._value2label_map_ = dict(zip(cls._value2member_map_, labels))\n        # Add a label property to instances of enum which uses the enum member\n        # that is passed in as \"self\" as the value to use when looking up the\n        # label in the choices.\n        cls.label = property(lambda self: cls._value2label_map_.get(self.value))\n        return enum.unique(cls)\n\n    def __contains__(cls, member):\n        if not isinstance(member, enum.Enum):\n            # Allow non-enums to match against member values.\n            return member in {x.value for x in cls}\n        return super().__contains__(member)\n\n    @property\n    def names(cls):\n        empty = ['__empty__'] if hasattr(cls, '__empty__') else []\n        return empty + [member.name for member in cls]\n\n    @property\n    def choices(cls):\n        empty = [(None, cls.__empty__)] if hasattr(cls, '__empty__') else []\n        return empty + [(member.value, member.label) for member in cls]\n\n    @property\n    def labels(cls):\n        return [label for _, label in cls.choices]\n\n    @property\n    def values(cls):\n        return [value for value, _ in cls.choices]\n\n\nclass Choices(enum.Enum, metaclass=ChoicesMeta):\n    \"\"\"Class for creating enumerated choices.\"\"\"\n    pass\n\n\nclass IntegerChoices(int, Choices):\n    \"\"\"Class for creating enumerated integer choices.\"\"\"\n    pass\n\n\nclass TextChoices(str, Choices):\n    \"\"\"Class for creating enumerated string choices.\"\"\"\n\n    def _generate_next_value_(name, start, count, last_values):\n        return name\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719224393
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The issue is that `TextChoices` and `IntegerChoices` inherit from `str`/`int` but `enum.Enum`'s `__str__` returns the member name (e.g., `MyChoice.FIRST_CHOICE`) rather than the value. Let me add `__str__` methods."
+      },
+      {
+        "type": "toolCall",
+        "id": "31mH77pSvw8pIG8U81eoqYKF75CQHBQ5",
+        "name": "edit",
+        "arguments": {
+          "path": "/testbed/django/db/models/enums.py",
+          "edits": [
+            {
+              "oldText": "class IntegerChoices(int, Choices):\n    \"\"\"Class for creating enumerated integer choices.\"\"\"\n    pass\n\n\nclass TextChoices(str, Choices):\n    \"\"\"Class for creating enumerated string choices.\"\"\"\n\n    def _generate_next_value_(name, start, count, last_values):\n        return name",
+              "newText": "class IntegerChoices(int, Choices):\n    \"\"\"Class for creating enumerated integer choices.\"\"\"\n\n    def __str__(self):\n        return str(self.value)\n\n\nclass TextChoices(str, Choices):\n    \"\"\"Class for creating enumerated string choices.\"\"\"\n\n    def _generate_next_value_(name, start, count, last_values):\n        return name\n\n    def __str__(self):\n        return str(self.value)"
+            }
+          ]
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 582,
+      "output": 293,
+      "cacheRead": 2704,
+      "cacheWrite": 0,
+      "totalTokens": 3579,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719224394,
+    "responseId": "chatcmpl-RW1EuJN7DIs05Jqwu7CXmFLqApJhxtlJ",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "31mH77pSvw8pIG8U81eoqYKF75CQHBQ5",
+    "toolName": "edit",
+    "content": [
+      {
+        "type": "text",
+        "text": "Successfully replaced 1 block(s) in /testbed/django/db/models/enums.py."
+      }
+    ],
+    "details": {
+      "diff": "    ...\n 64 \n 65 \n 66 class IntegerChoices(int, Choices):\n 67     \"\"\"Class for creating enumerated integer choices.\"\"\"\n-68     pass\n 69 \n+69     def __str__(self):\n+70         return str(self.value)\n 70 \n+72 \n 71 class TextChoices(str, Choices):\n 72     \"\"\"Class for creating enumerated string choices.\"\"\"\n 73 \n 74     def _generate_next_value_(name, start, count, last_values):\n 75         return name\n+78 \n+79     def __str__(self):\n+80         return str(self.value)",
+      "firstChangedLine": 68
+    },
+    "isError": false,
+    "timestamp": 1784719251293
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Now let me verify the fix:"
+      },
+      {
+        "type": "toolCall",
+        "id": "NKoy5ojmf5lTrSt5AlgGiFJpFRrTUNyQ",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python -c \"\nfrom django.db.models.enums import TextChoices, IntegerChoices\nfrom django.utils.translation import gettext_lazy as _\n\nclass MyChoice(TextChoices):\n    FIRST = 'first', _('first')\n    SECOND = 'second', _('second')\n\nc = MyChoice.FIRST\nprint(repr(str(c)))\nprint(str(c) == 'first')\nprint(isinstance(c, str))\n\nclass IntChoice(IntegerChoices):\n    ONE = 1\n    TWO = 2\n\nprint(str(IntChoice.ONE))\nprint(int(IntChoice.ONE) == 1)\n\""
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 30,
+      "output": 154,
+      "cacheRead": 3579,
+      "cacheWrite": 0,
+      "totalTokens": 3763,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719251294,
+    "responseId": "chatcmpl-hLi3gMnHUOYmvSWLFoXmj3cRb37FmjOU",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "NKoy5ojmf5lTrSt5AlgGiFJpFRrTUNyQ",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "'first'\nTrue\nTrue\n1\nTrue\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719262291
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The fix works. Let me check if there are existing tests for enums to run:"
+      },
+      {
+        "type": "toolCall",
+        "id": "B7aQGqhVZ0CQTmDvAmnMejfRaeBsfzLP",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && find . -name \"*.py\" | grep -i enum | grep test"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 114,
+      "output": 56,
+      "cacheRead": 3668,
+      "cacheWrite": 0,
+      "totalTokens": 3838,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719262292,
+    "responseId": "chatcmpl-JM6Bbpcz58dHsQHb9i8yY0CPmk6NBChI",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "B7aQGqhVZ0CQTmDvAmnMejfRaeBsfzLP",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "./tests/template_tests/filter_tests/test_linenumbers.py\n./tests/model_enums/__init__.py\n./tests/model_enums/tests.py\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719269508
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "lSwrlq9u67NTkPPKejOVatoEaDMEd35B",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python -m pytest tests/model_enums/tests.py -x -q 2>&1 | tail -20"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 44,
+      "output": 45,
+      "cacheRead": 3838,
+      "cacheWrite": 0,
+      "totalTokens": 3927,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719269509,
+    "responseId": "chatcmpl-OiUiccgexzw2TXYoqjmQb1sAyHQUh1JG",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "lSwrlq9u67NTkPPKejOVatoEaDMEd35B",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "/opt/miniconda3/envs/testbed/bin/python: No module named pytest\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719274628
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "dRbaZI0Rf3ZwGxfYyvMBFBtdyUJpfqS7",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python tests/runtests.py model_enums 2>&1 | tail -20"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 28,
+      "output": 39,
+      "cacheRead": 3927,
+      "cacheWrite": 0,
+      "totalTokens": 3994,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719274629,
+    "responseId": "chatcmpl-tagIcaSNu7SFE2aP0uDMrTEDs4Dv8SBi",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "dRbaZI0Rf3ZwGxfYyvMBFBtdyUJpfqS7",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "Testing against Django installed in '/testbed/django' with up to 32 processes\nSystem check identified no issues (0 silenced).\n................\n----------------------------------------------------------------------\nRan 16 tests in 0.129s\n\nOK\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719278850
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "All 16 existing tests pass. Let me also add a test for the `__str__` behavior to verify the fix is covered, following the existing test style:"
+      },
+      {
+        "type": "toolCall",
+        "id": "LOO8KeqihkDyxksQFFcIeNkPry15DbC2",
+        "name": "read",
+        "arguments": {
+          "path": "/testbed/tests/model_enums/tests.py"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 57,
+      "output": 59,
+      "cacheRead": 3994,
+      "cacheWrite": 0,
+      "totalTokens": 4110,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719278851,
+    "responseId": "chatcmpl-4LYJ85U54kPjKtObrnnmcsafZcFUUUE5",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "LOO8KeqihkDyxksQFFcIeNkPry15DbC2",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "import datetime\nimport decimal\nimport ipaddress\nimport uuid\n\nfrom django.db import models\nfrom django.test import SimpleTestCase\nfrom django.utils.functional import Promise\nfrom django.utils.translation import gettext_lazy as _\n\n\nclass Suit(models.IntegerChoices):\n    DIAMOND = 1, _('Diamond')\n    SPADE = 2, _('Spade')\n    HEART = 3, _('Heart')\n    CLUB = 4, _('Club')\n\n\nclass YearInSchool(models.TextChoices):\n    FRESHMAN = 'FR', _('Freshman')\n    SOPHOMORE = 'SO', _('Sophomore')\n    JUNIOR = 'JR', _('Junior')\n    SENIOR = 'SR', _('Senior')\n    GRADUATE = 'GR', _('Graduate')\n\n\nclass Vehicle(models.IntegerChoices):\n    CAR = 1, 'Carriage'\n    TRUCK = 2\n    JET_SKI = 3\n\n    __empty__ = _('(Unknown)')\n\n\nclass Gender(models.TextChoices):\n    MALE = 'M'\n    FEMALE = 'F'\n    NOT_SPECIFIED = 'X'\n\n    __empty__ = '(Undeclared)'\n\n\nclass ChoicesTests(SimpleTestCase):\n    def test_integerchoices(self):\n        self.assertEqual(Suit.choices, [(1, 'Diamond'), (2, 'Spade'), (3, 'Heart'), (4, 'Club')])\n        self.assertEqual(Suit.labels, ['Diamond', 'Spade', 'Heart', 'Club'])\n        self.assertEqual(Suit.values, [1, 2, 3, 4])\n        self.assertEqual(Suit.names, ['DIAMOND', 'SPADE', 'HEART', 'CLUB'])\n\n        self.assertEqual(repr(Suit.DIAMOND), '<Suit.DIAMOND: 1>')\n        self.assertEqual(Suit.DIAMOND.label, 'Diamond')\n        self.assertEqual(Suit.DIAMOND.value, 1)\n        self.assertEqual(Suit['DIAMOND'], Suit.DIAMOND)\n        self.assertEqual(Suit(1), Suit.DIAMOND)\n\n        self.assertIsInstance(Suit, type(models.Choices))\n        self.assertIsInstance(Suit.DIAMOND, Suit)\n        self.assertIsInstance(Suit.DIAMOND.label, Promise)\n        self.assertIsInstance(Suit.DIAMOND.value, int)\n\n    def test_integerchoices_auto_label(self):\n        self.assertEqual(Vehicle.CAR.label, 'Carriage')\n        self.assertEqual(Vehicle.TRUCK.label, 'Truck')\n        self.assertEqual(Vehicle.JET_SKI.label, 'Jet Ski')\n\n    def test_integerchoices_empty_label(self):\n        self.assertEqual(Vehicle.choices[0], (None, '(Unknown)'))\n        self.assertEqual(Vehicle.labels[0], '(Unknown)')\n        self.assertEqual(Vehicle.values[0], None)\n        self.assertEqual(Vehicle.names[0], '__empty__')\n\n    def test_integerchoices_functional_api(self):\n        Place = models.IntegerChoices('Place', 'FIRST SECOND THIRD')\n        self.assertEqual(Place.labels, ['First', 'Second', 'Third'])\n        self.assertEqual(Place.values, [1, 2, 3])\n        self.assertEqual(Place.names, ['FIRST', 'SECOND', 'THIRD'])\n\n    def test_integerchoices_containment(self):\n        self.assertIn(Suit.DIAMOND, Suit)\n        self.assertIn(1, Suit)\n        self.assertNotIn(0, Suit)\n\n    def test_textchoices(self):\n        self.assertEqual(YearInSchool.choices, [\n            ('FR', 'Freshman'), ('SO', 'Sophomore'), ('JR', 'Junior'), ('SR', 'Senior'), ('GR', 'Graduate'),\n        ])\n        self.assertEqual(YearInSchool.labels, ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate'])\n        self.assertEqual(YearInSchool.values, ['FR', 'SO', 'JR', 'SR', 'GR'])\n        self.assertEqual(YearInSchool.names, ['FRESHMAN', 'SOPHOMORE', 'JUNIOR', 'SENIOR', 'GRADUATE'])\n\n        self.assertEqual(repr(YearInSchool.FRESHMAN), \"<YearInSchool.FRESHMAN: 'FR'>\")\n        self.assertEqual(YearInSchool.FRESHMAN.label, 'Freshman')\n        self.assertEqual(YearInSchool.FRESHMAN.value, 'FR')\n        self.assertEqual(YearInSchool['FRESHMAN'], YearInSchool.FRESHMAN)\n        self.assertEqual(YearInSchool('FR'), YearInSchool.FRESHMAN)\n\n        self.assertIsInstance(YearInSchool, type(models.Choices))\n        self.assertIsInstance(YearInSchool.FRESHMAN, YearInSchool)\n        self.assertIsInstance(YearInSchool.FRESHMAN.label, Promise)\n        self.assertIsInstance(YearInSchool.FRESHMAN.value, str)\n\n    def test_textchoices_auto_label(self):\n        self.assertEqual(Gender.MALE.label, 'Male')\n        self.assertEqual(Gender.FEMALE.label, 'Female')\n        self.assertEqual(Gender.NOT_SPECIFIED.label, 'Not Specified')\n\n    def test_textchoices_empty_label(self):\n        self.assertEqual(Gender.choices[0], (None, '(Undeclared)'))\n        self.assertEqual(Gender.labels[0], '(Undeclared)')\n        self.assertEqual(Gender.values[0], None)\n        self.assertEqual(Gender.names[0], '__empty__')\n\n    def test_textchoices_functional_api(self):\n        Medal = models.TextChoices('Medal', 'GOLD SILVER BRONZE')\n        self.assertEqual(Medal.labels, ['Gold', 'Silver', 'Bronze'])\n        self.assertEqual(Medal.values, ['GOLD', 'SILVER', 'BRONZE'])\n        self.assertEqual(Medal.names, ['GOLD', 'SILVER', 'BRONZE'])\n\n    def test_textchoices_containment(self):\n        self.assertIn(YearInSchool.FRESHMAN, YearInSchool)\n        self.assertIn('FR', YearInSchool)\n        self.assertNotIn('XX', YearInSchool)\n\n    def test_textchoices_blank_value(self):\n        class BlankStr(models.TextChoices):\n            EMPTY = '', '(Empty)'\n            ONE = 'ONE', 'One'\n\n        self.assertEqual(BlankStr.labels, ['(Empty)', 'One'])\n        self.assertEqual(BlankStr.values, ['', 'ONE'])\n        self.assertEqual(BlankStr.names, ['EMPTY', 'ONE'])\n\n    def test_invalid_definition(self):\n        msg = \"'str' object cannot be interpreted as an integer\"\n        with self.assertRaisesMessage(TypeError, msg):\n            class InvalidArgumentEnum(models.IntegerChoices):\n                # A string is not permitted as the second argument to int().\n                ONE = 1, 'X', 'Invalid'\n\n        msg = \"duplicate values found in <enum 'Fruit'>: PINEAPPLE -> APPLE\"\n        with self.assertRaisesMessage(ValueError, msg):\n            class Fruit(models.IntegerChoices):\n                APPLE = 1, 'Apple'\n                PINEAPPLE = 1, 'Pineapple'\n\n\nclass Separator(bytes, models.Choices):\n    FS = b'\\x1c', 'File Separator'\n    GS = b'\\x1d', 'Group Separator'\n    RS = b'\\x1e', 'Record Separator'\n    US = b'\\x1f', 'Unit Separator'\n\n\nclass Constants(float, models.Choices):\n    PI = 3.141592653589793, 'π'\n    TAU = 6.283185307179586, 'τ'\n\n\nclass Set(frozenset, models.Choices):\n    A = {1, 2}\n    B = {2, 3}\n    UNION = A | B\n    DIFFERENCE = A - B\n    INTERSECTION = A & B\n\n\nclass MoonLandings(datetime.date, models.Choices):\n    APOLLO_11 = 1969, 7, 20, 'Apollo 11 (Eagle)'\n    APOLLO_12 = 1969, 11, 19, 'Apollo 12 (Intrepid)'\n    APOLLO_14 = 1971, 2, 5, 'Apollo 14 (Antares)'\n    APOLLO_15 = 1971, 7, 30, 'Apollo 15 (Falcon)'\n    APOLLO_16 = 1972, 4, 21, 'Apollo 16 (Orion)'\n    APOLLO_17 = 1972, 12, 11, 'Apollo 17 (Challenger)'\n\n\nclass DateAndTime(datetime.datetime, models.Choices):\n    A = 2010, 10, 10, 10, 10, 10\n    B = 2011, 11, 11, 11, 11, 11\n    C = 2012, 12, 12, 12, 12, 12\n\n\nclass MealTimes(datetime.time, models.Choices):\n    BREAKFAST = 7, 0\n    LUNCH = 13, 0\n    DINNER = 18, 30\n\n\nclass Frequency(datetime.timedelta, models.Choices):\n    WEEK = 0, 0, 0, 0, 0, 0, 1, 'Week'\n    DAY = 1, 'Day'\n    HOUR = 0, 0, 0, 0, 0, 1, 'Hour'\n    MINUTE = 0, 0, 0, 0, 1, 'Hour'\n    SECOND = 0, 1, 'Second'\n\n\nclass Number(decimal.Decimal, models.Choices):\n    E = 2.718281828459045, 'e'\n    PI = '3.141592653589793', 'π'\n    TAU = decimal.Decimal('6.283185307179586'), 'τ'\n\n\nclass IPv4Address(ipaddress.IPv4Address, models.Choices):\n    LOCALHOST = '127.0.0.1', 'Localhost'\n    GATEWAY = '192.168.0.1', 'Gateway'\n    BROADCAST = '192.168.0.255', 'Broadcast'\n\n\nclass IPv6Address(ipaddress.IPv6Address, models.Choices):\n    LOCALHOST = '::1', 'Localhost'\n    UNSPECIFIED = '::', 'Unspecified'\n\n\nclass IPv4Network(ipaddress.IPv4Network, models.Choices):\n    LOOPBACK = '127.0.0.0/8', 'Loopback'\n    LINK_LOCAL = '169.254.0.0/16', 'Link-Local'\n    PRIVATE_USE_A = '10.0.0.0/8', 'Private-Use (Class A)'\n\n\nclass IPv6Network(ipaddress.IPv6Network, models.Choices):\n    LOOPBACK = '::1/128', 'Loopback'\n    UNSPECIFIED = '::/128', 'Unspecified'\n    UNIQUE_LOCAL = 'fc00::/7', 'Unique-Local'\n    LINK_LOCAL_UNICAST = 'fe80::/10', 'Link-Local Unicast'\n\n\nclass CustomChoicesTests(SimpleTestCase):\n    def test_labels_valid(self):\n        enums = (\n            Separator, Constants, Set, MoonLandings, DateAndTime, MealTimes,\n            Frequency, Number, IPv4Address, IPv6Address, IPv4Network,\n            IPv6Network,\n        )\n        for choice_enum in enums:\n            with self.subTest(choice_enum.__name__):\n                self.assertNotIn(None, choice_enum.labels)\n\n    def test_bool_unsupported(self):\n        msg = \"type 'bool' is not an acceptable base type\"\n        with self.assertRaisesMessage(TypeError, msg):\n            class Boolean(bool, models.Choices):\n                pass\n\n    def test_timezone_unsupported(self):\n        msg = \"type 'datetime.timezone' is not an acceptable base type\"\n        with self.assertRaisesMessage(TypeError, msg):\n            class Timezone(datetime.timezone, models.Choices):\n                pass\n\n    def test_uuid_unsupported(self):\n        msg = 'UUID objects are immutable'\n        with self.assertRaisesMessage(TypeError, msg):\n            class Identifier(uuid.UUID, models.Choices):\n                A = '972ce4eb-a95f-4a56-9339-68c208a76f18'\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719285420
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Let me add tests for the `__str__` behavior in both `test_integerchoices` and `test_textchoices` methods:"
+      },
+      {
+        "type": "toolCall",
+        "id": "JQkzt60Uccfj72EStda5HWWM1bVYviJ1",
+        "name": "edit",
+        "arguments": {
+          "path": "/testbed/tests/model_enums/tests.py",
+          "edits": [
+            {
+              "oldText": "        self.assertIsInstance(Suit.DIAMOND, Suit)\n        self.assertIsInstance(Suit.DIAMOND.label, Promise)\n        self.assertIsInstance(Suit.DIAMOND.value, int)",
+              "newText": "        self.assertIsInstance(Suit.DIAMOND, Suit)\n        self.assertIsInstance(Suit.DIAMOND.label, Promise)\n        self.assertIsInstance(Suit.DIAMOND.value, int)\n\n        self.assertEqual(str(Suit.DIAMOND), '1')"
+            },
+            {
+              "oldText": "        self.assertIsInstance(YearInSchool.FRESHMAN, YearInSchool)\n        self.assertIsInstance(YearInSchool.FRESHMAN.label, Promise)\n        self.assertIsInstance(YearInSchool.FRESHMAN.value, str)",
+              "newText": "        self.assertIsInstance(YearInSchool.FRESHMAN, YearInSchool)\n        self.assertIsInstance(YearInSchool.FRESHMAN.label, Promise)\n        self.assertIsInstance(YearInSchool.FRESHMAN.value, str)\n\n        self.assertEqual(str(YearInSchool.FRESHMAN), 'FR')"
+            }
+          ]
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 2709,
+      "output": 300,
+      "cacheRead": 4110,
+      "cacheWrite": 0,
+      "totalTokens": 7119,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719285422,
+    "responseId": "chatcmpl-Fr09HzPpckhnGpJsp9dQVQDSAInL5jkV",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "JQkzt60Uccfj72EStda5HWWM1bVYviJ1",
+    "toolName": "edit",
+    "content": [
+      {
+        "type": "text",
+        "text": "Successfully replaced 2 block(s) in /testbed/tests/model_enums/tests.py."
+      }
+    ],
+    "details": {
+      "diff": "     ...\n  57         self.assertIsInstance(Suit.DIAMOND, Suit)\n  58         self.assertIsInstance(Suit.DIAMOND.label, Promise)\n  59         self.assertIsInstance(Suit.DIAMOND.value, int)\n  60 \n+ 61         self.assertEqual(str(Suit.DIAMOND), '1')\n+ 62 \n  61     def test_integerchoices_auto_label(self):\n  62         self.assertEqual(Vehicle.CAR.label, 'Carriage')\n  63         self.assertEqual(Vehicle.TRUCK.label, 'Truck')\n  64         self.assertEqual(Vehicle.JET_SKI.label, 'Jet Ski')\n     ...\n  98         self.assertIsInstance(YearInSchool.FRESHMAN, YearInSchool)\n  99         self.assertIsInstance(YearInSchool.FRESHMAN.label, Promise)\n 100         self.assertIsInstance(YearInSchool.FRESHMAN.value, str)\n 101 \n+104         self.assertEqual(str(YearInSchool.FRESHMAN), 'FR')\n+105 \n 102     def test_textchoices_auto_label(self):\n 103         self.assertEqual(Gender.MALE.label, 'Male')\n 104         self.assertEqual(Gender.FEMALE.label, 'Female')\n 105         self.assertEqual(Gender.NOT_SPECIFIED.label, 'Not Specified')\n     ...",
+      "firstChangedLine": 61
+    },
+    "isError": false,
+    "timestamp": 1784719347227
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "jZ5dK5BbuhWh8LLXEwN9qBTNZAqPjjQU",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python tests/runtests.py model_enums 2>&1 | tail -10"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 31,
+      "output": 39,
+      "cacheRead": 7119,
+      "cacheWrite": 0,
+      "totalTokens": 7189,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719347228,
+    "responseId": "chatcmpl-EI9FP9BkLaIOi0qmV5vanpcTurKjl2UY",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "jZ5dK5BbuhWh8LLXEwN9qBTNZAqPjjQU",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "Testing against Django installed in '/testbed/django' with up to 32 processes\nSystem check identified no issues (0 silenced).\n................\n----------------------------------------------------------------------\nRan 16 tests in 0.126s\n\nOK\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719351688
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "All tests pass. Let me also verify the full scenario from the issue (model with CharField/IntegerField + choices) to ensure the getter returns the correct string:"
+      },
+      {
+        "type": "toolCall",
+        "id": "WgMb4dl6BMAuEC1ghjTJp2xNLX0TBoaX",
+        "name": "bash",
+        "arguments": {
+          "command": "cd /testbed && python -c \"\nfrom django.db.models.enums import TextChoices, IntegerChoices\nfrom django.db import models\nfrom django.utils.translation import gettext_lazy as _\n\nclass MyChoice(TextChoices):\n    FIRST = 'first', _('first')\n    SECOND = 'second', _('second')\n\nclass MyIntChoice(IntegerChoices):\n    ONE = 1, _('one')\n    TWO = 2, _('two')\n\n# Simulate field getter behavior\nprint(str(MyChoice.FIRST) == 'first')\nprint(str(MyIntChoice.ONE) == '1')\nprint(str(MyChoice.FIRST))\nprint(str(MyIntChoice.ONE))\n\""
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 57,
+      "output": 194,
+      "cacheRead": 7189,
+      "cacheWrite": 0,
+      "totalTokens": 7440,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1784719351689,
+    "responseId": "chatcmpl-OkQBgun2GOeMvfzBaBCSOTCyoWdTtLTT",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "WgMb4dl6BMAuEC1ghjTJp2xNLX0TBoaX",
+    "toolName": "bash",
+    "content": [
+      {
+        "type": "text",
+        "text": "True\nTrue\nfirst\n1\n"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1784719367599
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The fix is complete. \n\n## Summary\n\nThe issue was that `TextChoices` and `IntegerChoices` enum members, when converted to a string via `str()`, returned the enum member name (e.g., `MyChoice.FIRST_CHOICE`) instead of the underlying value (e.g., `first`). This is because `enum.Enum.__str__` returns the member's name, and neither class overrode `__str__`.\n\n### Changes\n\n**`django/db/models/enums.py`** — Added `__str__` methods to `IntegerChoices` and `TextChoices` that return the string representation of the enum's `.value`:\n\n```python\nclass IntegerChoices(int, Choices):\n    \"\"\"Class for creating enumerated integer choices.\"\"\"\n\n    def __str__(self):\n        return str(self.value)\n\n\nclass TextChoices(str, Choices):\n    \"\"\"Class for creating enumerated string choices.\"\"\"\n\n    def _generate_next_value_(name, start, count, last_values):\n        return name\n\n    def __str__(self):\n        return str(self.value)\n```\n\n**`tests/model_enums/tests.py`** — Added assertions in `test_integerchoices` and `test_textchoices` to verify `str()` returns the value.\n\nAll 16 existing `model_enums` tests still pass, and the behavior now matches what's expected when serializing freshly created instances to external APIs."
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "llama.cpp",
+    "model": "local-model",
+    "usage": {
+      "input": 118,
+      "output": 284,
+      "cacheRead": 7338,
+      "cacheWrite": 0,
+      "totalTokens": 7740,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "stop",
+    "timestamp": 1784719367600,
+    "responseId": "chatcmpl-8aEWhM8pJtaJh8GZBdDShYgLe3beK8zf",
+    "responseModel": "/home/eric/Hy3-GGUF/models/Hy3-Q2_K_XL-mtp.gguf"
+  }
+]
