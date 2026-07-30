@@ -73,12 +73,17 @@ Download all 49 container images upfront (~2.4 GB download, ~6 GB on disk due to
 
 You can configure and use both local and cloud-based models as the backend engine for the `pi-coding-agent`.
 
-##### Local Providers (`llama.cpp`, `ds4`, and `vllm`)
-Local providers are configured in [models.json](file:///home/kyuz0/Documents/Projects/pi-bench/models.json) in the project root. By default:
+##### Local Providers (`llama.cpp`, `lemonade`, `ds4`, and `vllm`)
+Local providers are configured in `models.json` in the project root. By default:
 - `llama.cpp` expects a local server running at `http://localhost:8080/v1`
 - `ds4` and `vllm` expect a local server running at `http://localhost:8000/v1`
+- `lemonade` expects a Lemonade Server running at `http://localhost:13305/v1`
 
-When using a local provider, you do not need to specify a model name via `--model`. `pi-bench` will automatically query the local provider's `/v1/models` endpoint to retrieve the active model name and format the results directory accordingly. Whatever model your local server is currently running will be used.
+When using a local provider, you do not need to specify a model name via `--model`. `pi-bench` asks the server which model it is currently serving and formats the results directory accordingly. Whatever model your local server is currently running will be used.
+
+Detection differs per provider because the servers differ:
+- `llama.cpp`, `ds4`, `vllm` serve exactly one model, so `/v1/models` is authoritative.
+- `lemonade` is a multi-model server: its `/v1/models` lists the entire installable catalogue (including image, audio and TTS models), so pi-bench reads `/api/v1/health` instead, which reports the model actually resident on the GPU (`model_loaded`) along with the context window it was loaded with.
 
 
 **Example: Running with `llama.cpp`**
@@ -101,6 +106,28 @@ When using a local provider, you do not need to specify a model name via `--mode
   --rocm-version 7.2.4 \
   --timeout 45
 ```
+
+**Example: Running with `lemonade`**
+Lemonade serves whichever model is currently loaded, so no `--model` is needed:
+```bash
+./run-swe-bench.sh tasks/verified-mini/ \
+  --provider lemonade \
+  --judge-model google/gemini-3.1-pro-preview \
+  --platform strix-halo \
+  --rocm-version 7.2.4 \
+  --timeout 45
+```
+
+To benchmark a *different* Lemonade model, load it first and re-run - the runner picks up whatever is resident:
+```bash
+# list the LLMs you have installed
+curl -s localhost:13305/api/v1/models | python3 -c "import json,sys; [print(m['id']) for m in json.load(sys.stdin)['data'] if 'tool-calling' in m.get('labels', [])]"
+
+# load one, then check what is resident
+curl -s -X POST localhost:13305/api/v1/load -H 'Content-Type: application/json' -d '{"model_name":"Qwen3.6-35B-A3B-GGUF"}'
+curl -s localhost:13305/api/v1/health | python3 -c "import json,sys; print(json.load(sys.stdin)['model_loaded'])"
+```
+Only models labelled `tool-calling` can drive the coding agent. You can also pin one explicitly with `--model Qwen3.6-35B-A3B-GGUF`; Lemonade will load it on demand.
 
 **Example: Running with `vllm` and specifying a model**
 If your vLLM instance hosts multiple models or you want to explicitly select a configuration from `models.json`, use the `--model` flag:
@@ -136,6 +163,55 @@ After the agent finishes editing code, the runner:
 
 This combines the objectivity of SWE-bench's test-based evaluation with the explainability of an LLM judge.
 
+#### Choosing a judge
+
+There are two kinds of judge.
+
+**1. API judge (default)** - a model from the pi-ai registry, called over HTTP with an API key from `.env`:
+```bash
+--judge-model google/gemini-3.1-pro-preview   # needs GEMINI_API_KEY
+--judge-model anthropic/claude-opus-4-6       # needs ANTHROPIC_API_KEY
+--judge-model openai/gpt-5.2                  # needs OPENAI_API_KEY
+```
+This runs *inside* the SWE-bench container, which is why the key has to be in `.env` (the container gets it via `--env-file`).
+
+**2. CLI judge** - the `claude` (Claude Code) or `codex` CLI in headless mode:
+```bash
+./run-swe-bench.sh tasks/verified-mini/ \
+  --provider lemonade \
+  --judge-cli claude --judge-model opus \
+  --platform strix-halo \
+  --timeout 45
+```
+```bash
+./run-swe-bench.sh tasks/verified-mini/ \
+  --provider lemonade \
+  --judge-cli codex --judge-model gpt-5.2-codex \
+  --platform strix-halo \
+  --timeout 45
+```
+With `--judge-cli`, judging **runs on the host, not in the container**: the container writes `judgeScore: null`, then `run-swe-bench.sh` immediately scores that task on the host and fills the score in before deciding whether to retry (`--pass N` keeps working). The CLI reuses the login you already have, so no credentials ever enter a container and no API key is needed. Requirements:
+- `claude` or `codex` must be on your `PATH` and logged in (`claude` / `codex login`).
+- `--judge-model` is passed through to the CLI verbatim, so use *its* names: `opus`, `sonnet`, `haiku` for claude; `gpt-5.2-codex`, `gpt-5.1-codex-max` for codex. Omit it to use the CLI's default model.
+
+Each judge call is hermetic: it runs in a throwaway directory with tools disabled (`claude`) or sandboxed read-only (`codex`), so project `CLAUDE.md` / `AGENTS.md` and MCP servers do not leak into the verdict. `codex` is additionally pinned to a JSON output schema.
+
+#### Re-judging an existing run
+
+Judging is separable from running, so you can re-score results without re-running the agent - useful when comparing judges or when a judge call failed:
+```bash
+# score anything still pending
+bun run scripts/judge-results.ts benchmark_results/strix-halo/Qwen3_6-35B-A3B-GGUF_results --judge-cli claude
+
+# re-score everything with a different judge
+bun run scripts/judge-results.ts benchmark_results/strix-halo/Qwen3_6-35B-A3B-GGUF_results \
+  --judge-cli codex --force
+
+# or with an API model
+bun run scripts/judge-results.ts <results-dir> --judge-model google/gemini-3.1-pro-preview --force
+```
+The scored file records which judge produced the verdict in `judgedBy`, and `summary.json` is recomputed. Judges genuinely disagree on borderline cases (the judge prompt is allowed to override a failing test when the fix is practically correct), so `judgedBy` matters when comparing runs.
+
 ### Curated Tasks (Docker sandbox)
 
 For non-SWE-bench tasks (curated, custom), use the Docker runner:
@@ -161,13 +237,16 @@ bun run src/index.ts tasks/curated/easy.json
 
 | Flag | Description | Default |
 |---|---|---|
-| `--provider <name>` | Inference provider: `llama.cpp`, `ds4`, `vllm`, or `openrouter` | `llama.cpp` |
+| `--provider <name>` | Inference provider: `llama.cpp`, `lemonade`, `ds4`, `vllm`, or `openrouter` | `llama.cpp` |
 | `--model <model-id>` | Model ID within the provider (e.g. `deepseek/deepseek-v4-flash`) | Auto-detected |
-| `--judge-model <provider/id>` | Judge model (e.g. `google/gemini-3.1-pro-preview`) | Same as agent |
-| `--port <port>` | Override the local server port | `8080` (llama.cpp), `8000` (ds4, vllm) |
+| `--judge-model <provider/id>` | Judge model (e.g. `google/gemini-3.1-pro-preview`). With `--judge-cli`, the CLI's own model name (e.g. `opus`) | Same as agent |
+| `--judge-cli <claude\|codex>` | Judge with the `claude` or `codex` CLI on the host instead of an API model | - |
+| `--port <port>` | Override the local server port | `8080` (llama.cpp), `8000` (ds4, vllm), `13305` (lemonade) |
 | `--engine <name>` | Backward-compatible alias for `--provider` | — |
 
-**Local providers** (`llama.cpp`, `ds4`, `vllm`) auto-detect the model name by querying the local server's `/v1/models` endpoint. No `--model` needed unless you want to force a specific configuration from `models.json` or target a specific model on a multi-model server.
+**Local providers** (`llama.cpp`, `lemonade`, `ds4`, `vllm`) auto-detect which model the server is currently serving, so `--model` is only needed to force a specific configuration from `models.json` or to pick a model on a multi-model server. Detection uses `/v1/models` for single-model servers and `/api/v1/health` for `lemonade`, whose `/v1/models` lists its whole installable catalogue rather than what is loaded.
+
+A detected model does not need an entry in `models.json`: pi-bench registers it on the fly using the provider's settings (and the context window the server reports), so new quants work without editing config.
 
 **Cloud providers** (`openrouter`) require `--model` to specify which model to use, since the provider may host many models.
 
@@ -183,6 +262,7 @@ bun run src/index.ts tasks/curated/easy.json
 | `--context <tokens>` | Override model context window size for this run | From `models.json` |
 | `--timeout <minutes>` | Agent timeout per task | `30` |
 | `--pass <N>` | Number of attempts to make per task (retries on failure) | `1` |
+| `--defer-judge` | Skip judging; leave `judgeScore: null` for a later `scripts/judge-results.ts` pass | - |
 
 ### Examples
 
@@ -190,6 +270,14 @@ bun run src/index.ts tasks/curated/easy.json
 # Local llama.cpp (auto-detects model from server)
 ./run-swe-bench.sh tasks/verified-mini/ \
   --judge-model google/gemini-3.1-pro-preview \
+  --platform strix-halo \
+  --rocm-version 7.2.4 \
+  --timeout 45
+
+# Lemonade Server, judged by the local Claude Code CLI (no API key needed)
+./run-swe-bench.sh tasks/verified-mini/ \
+  --provider lemonade \
+  --judge-cli claude --judge-model opus \
   --platform strix-halo \
   --rocm-version 7.2.4 \
   --timeout 45

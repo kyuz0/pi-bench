@@ -30,6 +30,7 @@ interface ModelStats {
   backend: string;
   rocm: string;
   inferenceProfile?: string | null;
+  runUrl?: string;
   totalTasks: number;
   passedTasks: number;
   successRate: number;
