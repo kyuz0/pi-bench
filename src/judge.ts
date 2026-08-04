@@ -247,16 +247,20 @@ export async function judgeWithModel(
   judgeModel: any,
   auth: { apiKey?: string; headers?: Record<string, string> },
   prompt: string,
+  reasoning: "minimal" | "low" | "medium" | "high" | "xhigh" = "low",
 ): Promise<string> {
   const { streamSimple } = await import("@mariozechner/pi-ai");
   let judgeOutput = "";
+  let streamError: string | null = null;
   const stream = streamSimple(
     judgeModel,
     {
       systemPrompt: JUDGE_SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
     },
-    { apiKey: auth.apiKey, headers: auth.headers },
+    // Some endpoints (e.g. gemini-3.1-pro via OpenRouter) reject requests that
+    // disable reasoning, so ask for a level explicitly rather than leaving it unset.
+    { apiKey: auth.apiKey, headers: auth.headers, reasoning },
   );
 
   for await (const chunk of stream) {
@@ -264,8 +268,14 @@ export async function judgeWithModel(
       judgeOutput += chunk.delta;
     }
     if (chunk.type === "error") {
-      console.error("[DEBUG] streamSimple error:", chunk.error);
+      // Must propagate: a swallowed error yields an empty verdict that parses as
+      // score 0 and silently overwrites a real score with a failure.
+      streamError = chunk.error?.errorMessage ?? JSON.stringify(chunk.error);
     }
   }
+
+  if (streamError) throw new Error(`Judge model call failed: ${streamError}`);
+  if (!judgeOutput.trim()) throw new Error("Judge model returned an empty response.");
+
   return judgeOutput;
 }
