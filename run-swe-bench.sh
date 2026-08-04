@@ -11,7 +11,7 @@ set -e
 # The script:
 #   1. Iterates over task files in the given directory (or runs a single task file)
 #   2. For each task, launches the corresponding SWE-bench container
-#   3. Installs bun + pi-bench deps inside the container (cached via Docker volume)
+#   3. Installs bun + pi-bench deps inside the container (cached via a named volume)
 #   4. Runs the benchmark: agent works in /testbed, then FAIL_TO_PASS tests are executed
 #   5. Results are written back to the host via the bind-mounted pi-bench directory
 
@@ -35,8 +35,11 @@ done
 REGISTRY="ghcr.io/epoch-research/swe-bench.eval.x86_64"
 PI_BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Works with either docker or podman. See scripts/container-engine.sh.
+source "$PI_BENCH_DIR/scripts/container-engine.sh"
+
 # Create persistent bun cache volume (shared across all container runs)
-docker volume create pi-bench-bun-cache 2>/dev/null || true
+$ENGINE volume create pi-bench-bun-cache >/dev/null 2>&1 || true
 
 # Collect env file args
 ENV_ARGS=""
@@ -68,7 +71,7 @@ FAILED=0
 RESULTS_DIR=$(bun run src/index.ts --print-output-dir "$TARGET" $EXTRA_ARGS 2>/dev/null || true)
 
 echo "========================================================"
-echo "[INFO] SWE-bench Runner — $TOTAL tasks queued"
+echo "[INFO] SWE-bench Runner — $TOTAL tasks queued (engine: $ENGINE)"
 if [ -n "$RESULTS_DIR" ]; then
   echo "[INFO] Results directory: $RESULTS_DIR"
 fi
@@ -78,7 +81,7 @@ for task_file in "${TASK_FILES[@]}"; do
   COUNT=$((COUNT + 1))
   TASK_ID=$(python3 -c "import json; print(json.load(open('$task_file'))['id'])")
 
-  # Skip if result already exists (check on host to avoid docker startup overhead)
+  # Skip if result already exists (check on host to avoid container startup overhead)
   if [ -n "$RESULTS_DIR" ] && [ -f "$RESULTS_DIR/results-${TASK_ID}.json" ]; then
     echo ""
     echo "========================================================"
@@ -106,7 +109,7 @@ for task_file in "${TASK_FILES[@]}"; do
 
     # Run container and tee output to a temp file so we can extract the results dir
     LOGFILE=$(mktemp /tmp/pi-bench-log.XXXXXX)
-    docker run --init -it --rm --network host $ENV_ARGS \
+    $ENGINE run --init $TTY_ARGS --rm --network host $ENV_ARGS \
       -v "$PI_BENCH_DIR:/pi-bench:z" \
       -v "pi-bench-bun-cache:/root/.bun" \
       "$IMAGE" \

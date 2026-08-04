@@ -9,6 +9,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TASK_DIR="${SCRIPT_DIR}/../tasks/verified-mini"
 REGISTRY="ghcr.io/epoch-research/swe-bench.eval.x86_64"
 
+# Works with either docker or podman. See scripts/container-engine.sh.
+source "${SCRIPT_DIR}/container-engine.sh"
+
 if [ ! -d "$TASK_DIR" ]; then
   echo "[ERROR] Task directory not found: $TASK_DIR"
   echo "[INFO]  Run ./scripts/download-swe-mini.sh first to create task files."
@@ -24,10 +27,10 @@ for task_file in "$TASK_DIR"/*.json; do
   IMAGE="${REGISTRY}.${TASK_ID}:latest"
 
   echo "[$COUNT/$TOTAL] Pulling $IMAGE ..."
-  docker pull "$IMAGE" 2>&1 | tail -1
+  $ENGINE pull "$IMAGE" 2>&1 | tail -1
 done
 
 echo ""
 echo "=== All $TOTAL images pulled ==="
 echo "Disk usage:"
-docker images | grep "swe-bench.eval" | awk '{print "  " $1 ":" $2 " — " $NF}'
+$ENGINE images --format '  {{.Repository}}:{{.Tag}} — {{.Size}}' | grep "swe-bench.eval" || true
