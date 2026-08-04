@@ -53,6 +53,25 @@ if [ -n "$JUDGE_CLI" ] && ! command -v "$JUDGE_CLI" >/dev/null 2>&1; then
   echo "[ERROR] --judge-cli $JUDGE_CLI requested but '$JUDGE_CLI' is not in PATH on the host."
   exit 1
 fi
+
+# Detect the GPU runtime on the HOST, where the drivers actually live - the SWE-bench
+# containers have neither nvidia-smi nor /opt/rocm, so they cannot work this out themselves.
+# An explicit --runtime / --rocm-version always wins.
+if [[ ! "$EXTRA_ARGS" =~ (--runtime|--rocm-version) ]]; then
+  DETECTED_RUNTIME=""
+  if [ -r /opt/rocm/.info/version ]; then
+    DETECTED_RUNTIME="rocm:$(cut -d- -f1 /opt/rocm/.info/version)"
+  elif command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_VER=$(nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9.]*' | grep -o '[0-9.]*$')
+    [ -n "$CUDA_VER" ] && DETECTED_RUNTIME="cuda:$CUDA_VER"
+  fi
+  if [ -n "$DETECTED_RUNTIME" ]; then
+    echo "[INFO] Detected GPU runtime: $DETECTED_RUNTIME"
+    EXTRA_ARGS="$EXTRA_ARGS --runtime $DETECTED_RUNTIME"
+  else
+    echo "[WARN] No GPU runtime detected. Pass --runtime <name>:<version> to record it in run-meta.json."
+  fi
+fi
 REGISTRY="ghcr.io/epoch-research/swe-bench.eval.x86_64"
 PI_BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

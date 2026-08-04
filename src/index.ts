@@ -614,7 +614,10 @@ async function main() {
       platform: { type: "string" },
       provider: { type: "string" },
       engine: { type: "string" }, // backward compat alias for --provider
-      "rocm-version": { type: "string", default: "7.2.4" },
+      // GPU runtime as "<name>[:<version>]", e.g. cuda:13.2 or rocm:7.2.4.
+      runtime: { type: "string" },
+      // Deprecated spelling of --runtime rocm:<version>. Kept so existing commands keep working.
+      "rocm-version": { type: "string" },
       port: { type: "string" },
       "inference-profile": { type: "string" },
       "print-output-dir": { type: "boolean" },
@@ -629,7 +632,7 @@ async function main() {
 
   const targetPath = positionals[0];
   if (!targetPath && !values["print-output-dir"]) {
-    console.error("Usage: bun run src/index.ts <task-file-or-dir> [--provider llama.cpp|lemonade|ds4|vllm|openrouter] [--model model-id] [--judge-model provider/model-id] [--judge-cli claude|codex] [--defer-judge] [--model-tag tag] [--platform platform-id] [--rocm-version 7.2.4] [--port 8080] [--context tokens] [--inference-profile params]");
+    console.error("Usage: bun run src/index.ts <task-file-or-dir> [--provider llama.cpp|lemonade|ds4|vllm|openrouter] [--model model-id] [--judge-model provider/model-id] [--judge-cli claude|codex] [--defer-judge] [--model-tag tag] [--platform platform-id] [--runtime cuda:13.2|rocm:7.2.4] [--port 8080] [--context tokens] [--inference-profile params]");
     process.exit(1);
   }
 
@@ -741,13 +744,25 @@ async function main() {
     console.log(`[INFO] Context window override: ${contextWindowOverride} tokens`);
   }
 
+  // The GPU runtime is recorded, never guessed: a default here silently mislabelled
+  // every non-AMD run as ROCm. When nothing is passed the field is simply omitted.
+  const runtimeSpec = (values.runtime as string | undefined)
+    ?? (values["rocm-version"] ? `rocm:${values["rocm-version"]}` : undefined);
+  let runtime: { name: string; version?: string } | undefined;
+  if (runtimeSpec) {
+    const [name, ...version] = runtimeSpec.split(":");
+    runtime = { name: name.toLowerCase(), version: version.join(":") || undefined };
+  }
+
   await mkdir(outputDir, { recursive: true });
   const runMeta: any = {
     modelTag,
     backend: provider,
-    rocm: values["rocm-version"],
     exactModelId
   };
+  if (runtime) {
+    runMeta.runtime = runtime;
+  }
   if (values["inference-profile"]) {
     runMeta.inferenceProfile = values["inference-profile"];
   }

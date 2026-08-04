@@ -172,6 +172,19 @@ const App = {
             return p ? p.ram : null;
         };
 
+        // Compact form for the model card, e.g. "rocm7.2.4" / "cuda13.2".
+        const runtimeShort = (rt) => {
+            if (!rt || !rt.name) return '';
+            return `${rt.name}${rt.version || ''}`;
+        };
+
+        // Proper casing for the detail modal, e.g. "ROCm" / "CUDA".
+        const RUNTIME_NAMES = { rocm: 'ROCm', cuda: 'CUDA', metal: 'Metal', vulkan: 'Vulkan', cpu: 'CPU' };
+        const runtimeLabel = (rt) => {
+            if (!rt || !rt.name) return '';
+            return RUNTIME_NAMES[rt.name] || rt.name.toUpperCase();
+        };
+
         const getScoreClass = (rate) => {
             if (rate >= 0.8) return 'high';
             if (rate >= 0.5) return 'med';
@@ -234,6 +247,8 @@ const App = {
             activeModelModal,
             parseModelName,
             formatDuration,
+            runtimeShort,
+            runtimeLabel,
             getScoreClass,
             getPlatformRam,
             getPlatformName,
