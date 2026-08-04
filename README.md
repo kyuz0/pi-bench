@@ -56,12 +56,25 @@ This will automatically generate the 50 task files inside the `tasks/verified-mi
 
 ### SWE-bench Tasks (Recommended)
 
-SWE-bench tasks run inside **official SWE-bench Docker containers** from `ghcr.io/epoch-research/swe-bench.eval.x86_64.*`. Each task gets its own container with:
+SWE-bench tasks run inside **official SWE-bench containers** from `ghcr.io/epoch-research/swe-bench.eval.x86_64.*`. Each task gets its own container with:
 - The correct Python version (e.g. Python 3.6 for Django 3.1, Python 3.8+ for Sphinx)
 - All dependencies pre-installed
 - The repository checked out at the right commit in `/testbed`
 
 This eliminates the environment mismatch problems that plague host-side execution.
+
+#### Container engine
+
+All container scripts work with either **Docker** or **Podman** (including rootless Podman).
+The engine is auto-detected: Docker is used when available, otherwise Podman. Force a
+specific engine with the `CONTAINER_ENGINE` variable:
+
+```bash
+CONTAINER_ENGINE=podman ./run-swe-bench.sh tasks/verified-mini/
+```
+
+Under rootless Podman the container's `root` maps to your host user, so results written
+into the bind-mounted project directory are owned by you — no `sudo` or `chown` needed.
 
 #### Pre-pull containers (optional)
 Download all 49 container images upfront (~2.4 GB download, ~6 GB on disk due to heavy layer sharing):
@@ -136,9 +149,10 @@ After the agent finishes editing code, the runner:
 
 This combines the objectivity of SWE-bench's test-based evaluation with the explainability of an LLM judge.
 
-### Curated Tasks (Docker sandbox)
+### Curated Tasks (container sandbox)
 
-For non-SWE-bench tasks (curated, custom), use the Docker runner:
+For non-SWE-bench tasks (curated, custom), use the container runner (`run-docker.sh`,
+which works with Docker or Podman):
 ```bash
 ./run-docker.sh tasks/curated/ \
   --provider llama.cpp \
