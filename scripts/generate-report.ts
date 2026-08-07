@@ -22,14 +22,21 @@ interface Platform {
   ram: string;
 }
 
+interface GpuRuntime {
+  /** Lowercase runtime name, e.g. "rocm", "cuda". */
+  name: string;
+  version?: string;
+}
+
 interface ModelStats {
   id: string;
   platformId: string;
   name: string;
   tag: string | null;
   backend: string;
-  rocm: string;
+  runtime: GpuRuntime | null;
   inferenceProfile?: string | null;
+  runUrl?: string;
   totalTasks: number;
   passedTasks: number;
   successRate: number;
@@ -74,8 +81,8 @@ async function main() {
     platformDirs = await getDirectories(benchmarkResultsDir);
   }
   
-  // Array of { platform, modelDir, modelName, tag, backend, rocm, inferenceProfile }
-  const scanTargets: Array<{ platform: Platform; dir: string; name: string; tag: string | null; backend: string; rocm: string; inferenceProfile: string | null }> = [];
+  // Array of { platform, modelDir, modelName, tag, backend, runtime, inferenceProfile }
+  const scanTargets: Array<{ platform: Platform; dir: string; name: string; tag: string | null; backend: string; runtime: GpuRuntime | null; inferenceProfile: string | null }> = [];
 
   for (const dirName of platformDirs) {
     const fullPath = join(benchmarkResultsDir, dirName);
@@ -102,10 +109,10 @@ async function main() {
     const subDirs = await getDirectories(fullPath);
     for (const subDir of subDirs) {
       if (subDir.endsWith("_results")) {
-        // Read optional run-meta.json for model tag, backend, rocm, and inference profile
+        // Read optional run-meta.json for model tag, backend, runtime, and inference profile
         let modelTag: string | null = null;
         let backend = "unknown";
-        let rocm = "N/A";
+        let runtime: GpuRuntime | null = null;
         let inferenceProfile: string | null = null;
         let exactModelId: string | null = null;
         const metaPath = join(fullPath, subDir, "run-meta.json");
@@ -115,7 +122,13 @@ async function main() {
             const meta = JSON.parse(metaContent);
             modelTag = meta.modelTag || null;
             if (meta.backend) backend = meta.backend;
-            if (meta.rocm) rocm = meta.rocm;
+            // `runtime` is the current shape. `rocm` is the legacy field from before
+            // non-AMD platforms existed, so older runs keep rendering correctly.
+            if (meta.runtime?.name) {
+              runtime = { name: meta.runtime.name, version: meta.runtime.version };
+            } else if (meta.rocm) {
+              runtime = { name: "rocm", version: meta.rocm };
+            }
             if (meta.inferenceProfile) inferenceProfile = meta.inferenceProfile;
             if (meta.exactModelId) exactModelId = meta.exactModelId;
           } catch {}
@@ -136,7 +149,7 @@ async function main() {
           name: modelName,
           tag: modelTag,
           backend,
-          rocm,
+          runtime,
           inferenceProfile
         });
       }
@@ -205,7 +218,7 @@ async function main() {
         name: target.name,
         tag: target.tag,
         backend: target.backend,
-        rocm: target.rocm,
+        runtime: target.runtime,
         inferenceProfile: target.inferenceProfile,
         runUrl: runUrl,
         totalTasks,

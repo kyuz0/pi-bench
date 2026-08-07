@@ -6,6 +6,7 @@ set -e
 #
 # Usage:
 #   ./run-swe-bench.sh tasks/verified-mini/ --provider ds4 --judge-model google/gemini-3.1-pro-preview --platform strix-halo
+#   ./run-swe-bench.sh tasks/verified-mini/ --provider lemonade --judge-cli claude --platform strix-halo
 #   ./run-swe-bench.sh tasks/verified-mini/django__django-12209.json --provider openrouter --model deepseek/deepseek-v4-flash
 #
 # The script:
@@ -14,16 +15,31 @@ set -e
 #   3. Installs bun + pi-bench deps inside the container (cached via Docker volume)
 #   4. Runs the benchmark: agent works in /testbed, then FAIL_TO_PASS tests are executed
 #   5. Results are written back to the host via the bind-mounted pi-bench directory
+#   6. With --judge-cli, judging happens on the HOST right after each attempt, so the
+#      claude/codex CLI uses your existing login and no credentials enter the container
 
 TARGET="${1:?Usage: ./run-swe-bench.sh <task-file-or-dir> [extra-args...]}"
 shift
 
 PASS_COUNT=1
+JUDGE_CLI=""
+JUDGE_MODEL=""
 EXTRA_ARGS=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --pass)
       PASS_COUNT="$2"
+      shift 2
+      ;;
+    --judge-cli)
+      JUDGE_CLI="$2"
+      # The container declares the judge but defers it; the host runs it.
+      EXTRA_ARGS="$EXTRA_ARGS --judge-cli $2 --defer-judge"
+      shift 2
+      ;;
+    --judge-model)
+      JUDGE_MODEL="$2"
+      EXTRA_ARGS="$EXTRA_ARGS --judge-model $2"
       shift 2
       ;;
     *)
@@ -32,6 +48,30 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [ -n "$JUDGE_CLI" ] && ! command -v "$JUDGE_CLI" >/dev/null 2>&1; then
+  echo "[ERROR] --judge-cli $JUDGE_CLI requested but '$JUDGE_CLI' is not in PATH on the host."
+  exit 1
+fi
+
+# Detect the GPU runtime on the HOST, where the drivers actually live - the SWE-bench
+# containers have neither nvidia-smi nor /opt/rocm, so they cannot work this out themselves.
+# An explicit --runtime / --rocm-version always wins.
+if [[ ! "$EXTRA_ARGS" =~ (--runtime|--rocm-version) ]]; then
+  DETECTED_RUNTIME=""
+  if [ -r /opt/rocm/.info/version ]; then
+    DETECTED_RUNTIME="rocm:$(cut -d- -f1 /opt/rocm/.info/version)"
+  elif command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_VER=$(nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9.]*' | grep -o '[0-9.]*$')
+    [ -n "$CUDA_VER" ] && DETECTED_RUNTIME="cuda:$CUDA_VER"
+  fi
+  if [ -n "$DETECTED_RUNTIME" ]; then
+    echo "[INFO] Detected GPU runtime: $DETECTED_RUNTIME"
+    EXTRA_ARGS="$EXTRA_ARGS --runtime $DETECTED_RUNTIME"
+  else
+    echo "[WARN] No GPU runtime detected. Pass --runtime <name>:<version> to record it in run-meta.json."
+  fi
+fi
 REGISTRY="ghcr.io/epoch-research/swe-bench.eval.x86_64"
 PI_BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -104,6 +144,14 @@ for task_file in "${TASK_FILES[@]}"; do
       echo "[INFO] Starting attempt $ATTEMPT of $PASS_COUNT for $TASK_ID"
     fi
 
+    # The container runs as root against a bind-mounted repo, so results would come back
+    # root-owned - unusable for the host judge pass and awkward for git. Hand them back.
+    if [ -n "$RESULTS_DIR" ]; then
+      CHOWN_TARGETS="/pi-bench/$RESULTS_DIR"
+    else
+      CHOWN_TARGETS="/pi-bench/benchmark_results /pi-bench/results"
+    fi
+
     # Run container and tee output to a temp file so we can extract the results dir
     LOGFILE=$(mktemp /tmp/pi-bench-log.XXXXXX)
     docker run --init -it --rm --network host $ENV_ARGS \
@@ -133,8 +181,15 @@ for task_file in "${TASK_FILES[@]}"; do
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate testbed
 
-        # Run the benchmark
+        # Run the benchmark (keep its exit code: 2 means the backend is unreachable)
+        set +e
         bun run src/index.ts $REL_TASK_FILE $EXTRA_ARGS
+        RC=\$?
+        set -e
+
+        # Give the results back to the host user
+        chown -R $(id -u):$(id -g) $CHOWN_TARGETS 2>/dev/null || true
+        exit \$RC
       " 2>&1 | tee "$LOGFILE"
 
     EXIT_CODE=${PIPESTATUS[0]}
@@ -148,6 +203,16 @@ for task_file in "${TASK_FILES[@]}"; do
     if [ $EXIT_CODE -eq 2 ]; then
       echo "[FATAL] Inference backend is unreachable or crashed. Aborting entire benchmark run."
       exit 2
+    fi
+
+    # Judge on the host, before the retry decision below, so the claude/codex CLI can
+    # use the login it already has instead of needing credentials inside the container.
+    if [ -n "$JUDGE_CLI" ] && [ -n "$RESULTS_DIR" ] && [ -f "$RESULTS_DIR/results-${TASK_ID}.json" ]; then
+      echo "[INFO] Judging $TASK_ID on the host with the $JUDGE_CLI CLI..."
+      JUDGE_ARGS=(--judge-cli "$JUDGE_CLI" --no-summary)
+      [ -n "$JUDGE_MODEL" ] && JUDGE_ARGS+=(--judge-model "$JUDGE_MODEL")
+      bun run "$PI_BENCH_DIR/scripts/judge-results.ts" "$RESULTS_DIR/results-${TASK_ID}.json" "${JUDGE_ARGS[@]}" \
+        || echo "[WARN] Host judge failed for $TASK_ID - score left pending."
     fi
 
     # Rename the outputs for this attempt
@@ -222,10 +287,15 @@ echo "========================================================"
 if [ -n "$RESULTS_DIR" ] && [ -d "$RESULTS_DIR" ]; then
   echo "[INFO] Generating aggregate summary from $RESULTS_DIR ..."
   python3 -c "
-import json, glob, os, sys
+import json, glob, os, re, sys
 
 results_dir = sys.argv[1]
-result_files = sorted(glob.glob(os.path.join(results_dir, 'results-*.json')))
+# Exclude per-attempt files (results-<id>-attempt<N>.json); they are folded into the
+# combined results-<id>.json above and would otherwise be counted as extra tasks.
+result_files = sorted(
+    f for f in glob.glob(os.path.join(results_dir, 'results-*.json'))
+    if not re.search(r'-attempt\d+\.json$', f)
+)
 
 if not result_files:
     print('[WARN] No result files found, skipping summary generation.')
